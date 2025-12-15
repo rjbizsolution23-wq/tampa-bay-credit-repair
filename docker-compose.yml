@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════════
+  # WEB FRONTEND
+  # ═══════════════════════════════════════════════════════════════
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════════
+  # API BACKEND
+  # ═══════════════════════════════════════════════════════════════
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/tampa_credit_repair
+      - DIRECT_URL=postgresql://postgres:postgres@db:5432/tampa_credit_repair
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=changeme
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════════
+  # REDIS
+  # ═══════════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════════
+  # POSTGRES (Local Dev Only)
+  # ═══════════════════════════════════════════════════════════════
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=tampa_credit_repair
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════════
+  # BACKGROUND WORKER
+  # ═══════════════════════════════════════════════════════════════
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A app.worker worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/tampa_credit_repair
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

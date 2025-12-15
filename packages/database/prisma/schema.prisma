@@ -1,0 +1,627 @@
+// packages/database/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// USER & AUTHENTICATION
+// ═══════════════════════════════════════════════════════════════
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  emailVerified     DateTime?
+  hashedPassword    String?
+  firstName         String
+  lastName          String
+  phone             String?
+  dateOfBirth       DateTime?
+  ssn               String?   @db.VarChar(11) // Encrypted
+  address           Address?
+  role              UserRole  @default(CLIENT)
+  status            UserStatus @default(PENDING)
+  
+  // Relationships
+  creditReports     CreditReport[]
+  disputes          Dispute[]
+  documents         Document[]
+  payments          Payment[]
+  subscription      Subscription?
+  notes             Note[]
+  activities        Activity[]
+  
+  // MyFreeScoreNow Integration
+  mfsnUsername      String?
+  mfsnPassword      String?   // Encrypted
+  mfsnEnrolled      Boolean   @default(false)
+  mfsnEnrolledAt    DateTime?
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastLoginAt       DateTime?
+  
+  // Referral tracking
+  referredBy        String?
+  referralCode      String?   @unique
+  referrals         User[]    @relation("Referrals")
+  referrer          User?     @relation("Referrals", fields: [referredBy], references: [id])
+  
+  @@map("users")
+}
+
+model Address {
+  id            String  @id @default(cuid())
+  street1       String
+  street2       String?
+  city          String
+  state         String  @db.VarChar(2)
+  zipCode       String  @db.VarChar(10)
+  
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("addresses")
+}
+
+enum UserRole {
+  CLIENT
+  ADMIN
+  SUPER_ADMIN
+  AFFILIATE
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  COMPLETED
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CREDIT REPORTS
+// ═══════════════════════════════════════════════════════════════
+
+model CreditReport {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Scores
+  transunionScore   Int?
+  equifaxScore      Int?
+  experianScore     Int?
+  
+  // Raw data from MyFreeScoreNow
+  rawData         Json?
+  
+  // Parsed data
+  tradelines      Tradeline[]
+  inquiries       Inquiry[]
+  publicRecords   PublicRecord[]
+  personalInfo    Json?
+  
+  // Summary stats
+  totalAccounts       Int?
+  negativeAccounts    Int?
+  totalBalance        Decimal?
+  totalCreditLimit    Decimal?
+  utilizationRate     Decimal?
+  
+  // Source tracking
+  source          String          @default("MYFREESCORENOW")
+  reportDate      DateTime
+  pulledAt        DateTime        @default(now())
+  
+  @@map("credit_reports")
+}
+
+model Tradeline {
+  id                String        @id @default(cuid())
+  creditReportId    String
+  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  
+  // Account info
+  creditorName      String
+  accountNumber     String        // Last 4 digits only
+  accountType       AccountType
+  bureau            Bureau
+  
+  // Status
+  accountStatus     AccountStatus
+  paymentStatus     String?
+  
+  // Financials
+  creditLimit       Decimal?
+  highBalance       Decimal?
+  currentBalance    Decimal?
+  monthlyPayment    Decimal?
+  
+  // Dates
+  dateOpened        DateTime?
+  dateLastActive    DateTime?
+  dateLastPayment   DateTime?
+  dateClosed        DateTime?
+  
+  // Payment history (24 months)
+  paymentHistory    String?       @db.VarChar(24)
+  
+  // Negative indicators
+  isNegative        Boolean       @default(false)
+  negativeReason    String?
+  
+  // Dispute tracking
+  disputes          Dispute[]
+  
+  @@map("tradelines")
+}
+
+model Inquiry {
+  id                String        @id @default(cuid())
+  creditReportId    String
+  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  
+  creditorName      String
+  bureau            Bureau
+  inquiryDate       DateTime
+  inquiryType       InquiryType
+  
+  // Dispute tracking
+  disputes          Dispute[]
+  
+  @@map("inquiries")
+}
+
+model PublicRecord {
+  id                String        @id @default(cuid())
+  creditReportId    String
+  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  
+  recordType        PublicRecordType
+  courtName         String?
+  caseNumber        String?
+  filingDate        DateTime?
+  amount            Decimal?
+  bureau            Bureau
+  status            String?
+  
+  // Dispute tracking
+  disputes          Dispute[]
+  
+  @@map("public_records")
+}
+
+enum Bureau {
+  TRANSUNION
+  EQUIFAX
+  EXPERIAN
+}
+
+enum AccountType {
+  REVOLVING
+  INSTALLMENT
+  MORTGAGE
+  OPEN
+  COLLECTION
+  OTHER
+}
+
+enum AccountStatus {
+  OPEN
+  CLOSED
+  PAID
+  COLLECTION
+  CHARGE_OFF
+  FORECLOSURE
+  REPOSSESSION
+}
+
+enum InquiryType {
+  HARD
+  SOFT
+}
+
+enum PublicRecordType {
+  BANKRUPTCY
+  JUDGMENT
+  TAX_LIEN
+  CIVIL_JUDGMENT
+  OTHER
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DISPUTES
+// ═══════════════════════════════════════════════════════════════
+
+model Dispute {
+  id                String          @id @default(cuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // What's being disputed
+  disputeType       DisputeType
+  tradelineId       String?
+  tradeline         Tradeline?      @relation(fields: [tradelineId], references: [id])
+  inquiryId         String?
+  inquiry           Inquiry?        @relation(fields: [inquiryId], references: [id])
+  publicRecordId    String?
+  publicRecord      PublicRecord?   @relation(fields: [publicRecordId], references: [id])
+  
+  // Dispute details
+  bureau            Bureau
+  reason            DisputeReason
+  customReason      String?
+  instructions      String?         @db.Text
+  
+  // Letter details
+  letterType        LetterType
+  letterContent     String?         @db.Text
+  letterSentAt      DateTime?
+  letterMethod      DeliveryMethod?
+  trackingNumber    String?
+  
+  // Status tracking
+  status            DisputeStatus   @default(PENDING)
+  round             Int             @default(1)
+  
+  // Response tracking
+  responseReceivedAt DateTime?
+  responseType      ResponseType?
+  responseNotes     String?         @db.Text
+  
+  // Outcome
+  outcome           DisputeOutcome?
+  outcomeDate       DateTime?
+  deletedFromReport Boolean         @default(false)
+  corrected         Boolean         @default(false)
+  
+  // Timestamps
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Related documents
+  documents         Document[]
+  
+  @@map("disputes")
+}
+
+enum DisputeType {
+  TRADELINE
+  INQUIRY
+  PUBLIC_RECORD
+  PERSONAL_INFO
+}
+
+enum DisputeReason {
+  NOT_MY_ACCOUNT
+  ACCOUNT_CLOSED
+  PAID_IN_FULL
+  INCORRECT_BALANCE
+  INCORRECT_PAYMENT_HISTORY
+  INCORRECT_DATES
+  DUPLICATE_ACCOUNT
+  IDENTITY_THEFT
+  MIXED_FILE
+  OUTDATED_INFO
+  NEVER_LATE
+  INCORRECT_STATUS
+  UNAUTHORIZED_INQUIRY
+  OTHER
+}
+
+enum LetterType {
+  INITIAL_DISPUTE
+  FOLLOW_UP
+  METHOD_OF_VERIFICATION
+  PROCEDURAL_REQUEST
+  DEBT_VALIDATION
+  CEASE_AND_DESIST
+  GOODWILL
+  PAY_FOR_DELETE
+  EARLY_EXCLUSION
+  FACTUAL_DISPUTE
+}
+
+enum DeliveryMethod {
+  CERTIFIED_MAIL
+  REGULAR_MAIL
+  ONLINE_PORTAL
+  FAX
+}
+
+enum DisputeStatus {
+  PENDING
+  LETTER_GENERATED
+  SENT
+  IN_REVIEW
+  RESPONSE_RECEIVED
+  COMPLETED
+  ESCALATED
+}
+
+enum ResponseType {
+  VERIFIED
+  DELETED
+  UPDATED
+  NO_RESPONSE
+  FRIVOLOUS
+  REINVESTIGATION
+}
+
+enum DisputeOutcome {
+  DELETED
+  CORRECTED
+  VERIFIED_ACCURATE
+  NO_RESPONSE_DELETED
+  IN_PROGRESS
+  ESCALATED_TO_CFPB
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DOCUMENTS
+// ═══════════════════════════════════════════════════════════════
+
+model Document {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  disputeId       String?
+  dispute         Dispute?        @relation(fields: [disputeId], references: [id])
+  
+  // File info
+  name            String
+  type            DocumentType
+  mimeType        String
+  size            Int
+  url             String
+  
+  // Metadata
+  uploadedAt      DateTime        @default(now())
+  
+  @@map("documents")
+}
+
+enum DocumentType {
+  ID_FRONT
+  ID_BACK
+  SSN_CARD
+  UTILITY_BILL
+  DISPUTE_LETTER
+  RESPONSE_LETTER
+  CREDIT_REPORT
+  SIGNED_CONTRACT
+  OTHER
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PAYMENTS & SUBSCRIPTIONS
+// ═══════════════════════════════════════════════════════════════
+
+model Subscription {
+  id                String            @id @default(cuid())
+  userId            String            @unique
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Plan details
+  planId            String
+  plan              Plan              @relation(fields: [planId], references: [id])
+  
+  // Stripe
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
+  stripePriceId         String?
+  
+  // Status
+  status            SubscriptionStatus
+  
+  // Dates
+  startDate         DateTime
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  canceledAt        DateTime?
+  endedAt           DateTime?
+  
+  // Trial
+  trialStart        DateTime?
+  trialEnd          DateTime?
+  
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  @@map("subscriptions")
+}
+
+model Plan {
+  id              String          @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Pricing
+  price           Decimal
+  interval        PlanInterval
+  
+  // Features
+  disputesPerMonth    Int
+  bureausIncluded     Int         @default(3)
+  creditMonitoring    Boolean     @default(true)
+  prioritySupport     Boolean     @default(false)
+  
+  // Stripe
+  stripePriceId   String?
+  
+  // Status
+  active          Boolean         @default(true)
+  
+  subscriptions   Subscription[]
+  
+  @@map("plans")
+}
+
+model Payment {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Amount
+  amount          Decimal
+  currency        String          @default("USD")
+  
+  // Stripe
+  stripePaymentIntentId String?
+  stripeChargeId        String?
+  
+  // Status
+  status          PaymentStatus
+  
+  // Metadata
+  description     String?
+  
+  createdAt       DateTime        @default(now())
+  
+  @@map("payments")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+}
+
+enum PlanInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CRM FEATURES
+// ═══════════════════════════════════════════════════════════════
+
+model Note {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  content         String          @db.Text
+  createdBy       String          // Admin user ID
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@map("notes")
+}
+
+model Activity {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type            ActivityType
+  description     String
+  metadata        Json?
+  
+  createdAt       DateTime        @default(now())
+  
+  @@map("activities")
+}
+
+enum ActivityType {
+  SIGNUP
+  LOGIN
+  CREDIT_PULL
+  DISPUTE_CREATED
+  DISPUTE_SENT
+  DISPUTE_RESPONSE
+  PAYMENT
+  DOCUMENT_UPLOAD
+  STATUS_CHANGE
+  NOTE_ADDED
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AFFILIATE TRACKING
+// ═══════════════════════════════════════════════════════════════
+
+model Affiliate {
+  id              String          @id @default(cuid())
+  userId          String          @unique
+  
+  // Affiliate details
+  code            String          @unique
+  commissionRate  Decimal         @default(0.10) // 10%
+  
+  // Stats
+  totalReferrals  Int             @default(0)
+  totalEarnings   Decimal         @default(0)
+  
+  // Payout info
+  paypalEmail     String?
+  
+  createdAt       DateTime        @default(now())
+  
+  @@map("affiliates")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EMAIL & SMS TEMPLATES
+// ═══════════════════════════════════════════════════════════════
+
+model EmailTemplate {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  subject         String
+  body            String          @db.Text
+  type            EmailType
+  
+  active          Boolean         @default(true)
+  
+  @@map("email_templates")
+}
+
+model SmsTemplate {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  body            String          @db.VarChar(160)
+  type            SmsType
+  
+  active          Boolean         @default(true)
+  
+  @@map("sms_templates")
+}
+
+enum EmailType {
+  WELCOME
+  VERIFICATION
+  PASSWORD_RESET
+  DISPUTE_SENT
+  DISPUTE_UPDATE
+  PAYMENT_RECEIPT
+  PAYMENT_FAILED
+  SUBSCRIPTION_REMINDER
+  MONTHLY_REPORT
+}
+
+enum SmsType {
+  VERIFICATION
+  DISPUTE_UPDATE
+  PAYMENT_REMINDER
+  APPOINTMENT_REMINDER
+}

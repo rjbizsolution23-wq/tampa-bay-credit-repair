@@ -1,0 +1,35 @@
+{
+    "name": "tampa-bay-credit-repair",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Professional Credit Repair Platform - Next.js 15 + FastAPI",
+    "author": "Rick Jefferson <rickjefferson@rickjeffersonsolutions.com>",
+    "license": "UNLICENSED",
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ],
+    "scripts": {
+        "dev": "turbo run dev",
+        "build": "turbo run build",
+        "test": "turbo run test",
+        "lint": "turbo run lint",
+        "clean": "turbo run clean && rm -rf node_modules",
+        "db:generate": "cd packages/database && npx prisma generate",
+        "db:migrate": "cd packages/database && npx prisma migrate dev",
+        "db:push": "cd packages/database && npx prisma db push",
+        "db:studio": "cd packages/database && npx prisma studio",
+        "api:dev": "cd services/api && uvicorn app.main:app --reload",
+        "web:dev": "cd apps/web && npm run dev",
+        "docker:up": "docker-compose up -d",
+        "docker:down": "docker-compose down"
+    },
+    "devDependencies": {
+        "turbo": "^2.0.0",
+        "typescript": "^5.3.0"
+    },
+    "engines": {
+        "node": ">=20.0.0",
+        "npm": ">=10.0.0"
+    }
+}
