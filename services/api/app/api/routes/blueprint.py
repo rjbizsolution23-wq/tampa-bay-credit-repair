@@ -8,25 +8,27 @@ from app.core.database import get_db
 from app.services.audit.blueprint_service import blueprint_service
 from app.services.pdf_generator import pdf_generator
 from app.models.audit import BlueprintAudit, AuditItem, AuditRecommendation, ConsultationForm, AuditStatus
-# from app.models.credit_report import CreditReport # Needed if we query it directly
-# from app.models.user import User
+from app.api.routes import deps
+from app.models.user import User
 
 router = APIRouter()
 
 @router.post("/start", status_code=status.HTTP_201_CREATED)
 async def start_audit(
     payload: Dict[str, Any], 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
 ):
     """
     Start a new blueprint audit for a credit report.
-    Payload: { "creditReportId": "...", "userId": "..." }
+    Payload: { "creditReportId": "..." }
     """
     credit_report_id = payload.get("creditReportId")
-    user_id = payload.get("userId")
+    # user_id comes from token for security, ignoring payload userId if sent
+    user_id = str(current_user.id)
     
-    if not credit_report_id or not user_id:
-        raise HTTPException(status_code=400, detail="Missing required fields")
+    if not credit_report_id:
+        raise HTTPException(status_code=400, detail="Missing required field: creditReportId")
 
     # Fetch Credit Report (Mocking the fetch for now as models aren't fully set up for CreditReport)
     # In a real scenario: cr = db.query(CreditReport).get(credit_report_id)
@@ -58,11 +60,19 @@ async def start_audit(
     return {"id": audit.id, "status": audit.status}
 
 @router.get("/{audit_id}")
-def get_audit(audit_id: str, db: Session = Depends(get_db)):
+def get_audit(
+    audit_id: str, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
+):
     audit = db.query(BlueprintAudit).filter(BlueprintAudit.id == audit_id).first()
     if not audit:
         raise HTTPException(status_code=404, detail="Audit not found")
         
+    # Ensure user owns this audit or is superuser
+    if audit.userId != str(current_user.id) and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized to view this audit")
+
     # Eager load items if needed, or rely on lazy loading
     return audit
 
@@ -71,7 +81,8 @@ async def complete_audit(
     audit_id: str, 
     data: Dict[str, Any], 
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
 ):
     audit = db.query(BlueprintAudit).filter(BlueprintAudit.id == audit_id).first()
     if not audit:

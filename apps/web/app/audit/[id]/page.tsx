@@ -1,6 +1,8 @@
 import { ConsultationForm } from "@/components/audit/ConsultationForm"
 import { notFound } from "next/navigation"
 
+export const runtime = 'edge';
+
 // This would typically fetch from the API
 async function getAuditData(id: string) {
     // In a real SSR scenario, you'd call your internal service or API URL
