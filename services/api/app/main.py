@@ -13,7 +13,7 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.database import engine
-from app.api.routes import auth, users, credit_reports, disputes, payments, webhooks, admin
+from app.api.routes import auth, users, credit_reports, disputes, payments, webhooks, admin, blueprint
 from app.models import base
 
 # ═══════════════════════════════════════════════════════════════
@@ -94,6 +94,7 @@ app.include_router(disputes.router, prefix="/api/disputes", tags=["Disputes"])
 app.include_router(payments.router, prefix="/api/payments", tags=["Payments"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(blueprint.router, prefix="/api/blueprint", tags=["Blueprint Audit"])
 
 # ═══════════════════════════════════════════════════════════════
 # HEALTH CHECK

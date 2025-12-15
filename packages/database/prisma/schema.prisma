@@ -11,64 +11,48 @@ datasource db {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// USER & AUTHENTICATION
+// USER MANAGEMENT
 // ═══════════════════════════════════════════════════════════════
 
 model User {
-  id                String    @id @default(cuid())
-  email             String    @unique
-  emailVerified     DateTime?
-  hashedPassword    String?
-  firstName         String
-  lastName          String
-  phone             String?
-  dateOfBirth       DateTime?
-  ssn               String?   @db.VarChar(11) // Encrypted
-  address           Address?
-  role              UserRole  @default(CLIENT)
-  status            UserStatus @default(PENDING)
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?   @unique
+  
+  // Profile
+  firstName     String?
+  lastName      String?
+  dateOfBirth   DateTime?
+  ssnLast4      String?
+  
+  // Auth
+  passwordHash  String
+  role          UserRole  @default(CLIENT)
+  status        UserStatus @default(ACTIVE)
+  isVerified    Boolean   @default(false)
   
   // Relationships
-  creditReports     CreditReport[]
-  disputes          Dispute[]
-  documents         Document[]
-  payments          Payment[]
-  subscription      Subscription?
-  notes             Note[]
-  activities        Activity[]
+  addresses     Address[]
+  creditReports CreditReport[]
+  disputes      Dispute[]
+  documents     Document[]
+  notifications Notification[]
+  subscription  Subscription?
+  payments      Payment[]
+  notes         Note[]
+  activities    Activity[]
   
-  // MyFreeScoreNow Integration
-  mfsnUsername      String?
-  mfsnPassword      String?   // Encrypted
-  mfsnEnrolled      Boolean   @default(false)
-  mfsnEnrolledAt    DateTime?
+  // Affiliate
+  affiliate     Affiliate?
+  referredBy    String?   // Code of affiliate who referred this user
   
-  // Timestamps
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  lastLoginAt       DateTime?
-  
-  // Referral tracking
-  referredBy        String?
-  referralCode      String?   @unique
-  referrals         User[]    @relation("Referrals")
-  referrer          User?     @relation("Referrals", fields: [referredBy], references: [id])
+  // Blueprint Audit System
+  blueprintAudits BlueprintAudit[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   
   @@map("users")
-}
-
-model Address {
-  id            String  @id @default(cuid())
-  street1       String
-  street2       String?
-  city          String
-  state         String  @db.VarChar(2)
-  zipCode       String  @db.VarChar(10)
-  
-  userId        String  @unique
-  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("addresses")
 }
 
 enum UserRole {
@@ -76,127 +60,154 @@ enum UserRole {
   ADMIN
   SUPER_ADMIN
   AFFILIATE
+  PARTNER
 }
 
 enum UserStatus {
-  PENDING
   ACTIVE
+  INACTIVE
   SUSPENDED
-  CANCELLED
-  COMPLETED
+  ARCHIVED
+}
+
+model Address {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  street        String
+  city          String
+  state         String
+  zipCode       String
+  country       String    @default("US")
+  
+  isPrimary     Boolean   @default(false)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@map("addresses")
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CREDIT REPORTS
+// NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════
+
+model Notification {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title         String
+  message       String
+  type          NotificationType
+  read          Boolean   @default(false)
+  
+  createdAt     DateTime  @default(now())
+  
+  @@map("notifications")
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  DISPUTE_UPDATE
+  SCORE_UPDATE
+  BILLING
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CREDIT REPORT DATA
 // ═══════════════════════════════════════════════════════════════
 
 model CreditReport {
-  id              String          @id @default(cuid())
+  id              String    @id @default(cuid())
   userId          String
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Monitoring Service
+  provider        CreditProvider // MY_FREE_SCORE_NOW, IDENTITY_IQ, ETC.
+  externalId      String?   // ID in the provider's system
   
   // Scores
-  transunionScore   Int?
-  equifaxScore      Int?
-  experianScore     Int?
+  transunionScore Int?
+  equifaxScore    Int?
+  experianScore   Int?
   
-  // Raw data from MyFreeScoreNow
-  rawData         Json?
+  // Raw Data
+  reportDate      DateTime
+  nextUpdateDate  DateTime?
+  rawJson         Json?     // Full raw JSON dump from provider
   
-  // Parsed data
+  // Parsed Items
   tradelines      Tradeline[]
   inquiries       Inquiry[]
   publicRecords   PublicRecord[]
-  personalInfo    Json?
   
-  // Summary stats
-  totalAccounts       Int?
-  negativeAccounts    Int?
-  totalBalance        Decimal?
-  totalCreditLimit    Decimal?
-  utilizationRate     Decimal?
+  // Blueprint Audit System
+  blueprintAudits BlueprintAudit[]
   
-  // Source tracking
-  source          String          @default("MYFREESCORENOW")
-  reportDate      DateTime
-  pulledAt        DateTime        @default(now())
+  createdAt       DateTime  @default(now())
   
   @@map("credit_reports")
 }
 
+enum CreditProvider {
+  MY_FREE_SCORE_NOW
+  IDENTITY_IQ
+  SMART_CREDIT
+  AUTO_PULL
+}
+
 model Tradeline {
-  id                String        @id @default(cuid())
-  creditReportId    String
-  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(cuid())
+  creditReportId        String
+  creditReport          CreditReport @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
   
-  // Account info
-  creditorName      String
-  accountNumber     String        // Last 4 digits only
-  accountType       AccountType
-  bureau            Bureau
-  
-  // Status
-  accountStatus     AccountStatus
-  paymentStatus     String?
+  // Core Info
+  creditorName          String
+  accountNumber         String?   // Masked usually
+  accountType           String?   // Revolving, Installment, etc.
+  accountStatus         String?   // Open, Closed, Collections, etc.
   
   // Financials
-  creditLimit       Decimal?
-  highBalance       Decimal?
-  currentBalance    Decimal?
-  monthlyPayment    Decimal?
+  currentBalance        Decimal?
+  creditLimit           Decimal?
+  monthlyPayment        Decimal?
+  pastDueAmount         Decimal?
   
   // Dates
-  dateOpened        DateTime?
-  dateLastActive    DateTime?
-  dateLastPayment   DateTime?
-  dateClosed        DateTime?
+  dateOpened            DateTime?
+  dateReported          DateTime?
+  dateLastActive        DateTime?
+  dateOfFirstDelinquency DateTime? // Crucial for disputes
   
-  // Payment history (24 months)
-  paymentHistory    String?       @db.VarChar(24)
+  // Payment History
+  paymentHistory        String?   // Encoded string or JSON
+  late30Count           Int       @default(0)
+  late60Count           Int       @default(0)
+  late90Count           Int       @default(0)
   
-  // Negative indicators
-  isNegative        Boolean       @default(false)
-  negativeReason    String?
+  // Remarks
+  remarks               String?
   
-  // Dispute tracking
-  disputes          Dispute[]
+  // Analysis
+  isNegative            Boolean   @default(false)
+  negativeReason        String?   // "Late Payment", "Collection", "Charge Off"
+  
+  // Ownership
+  accountOwnership      String?   // Individual, Joint, Authorized User
+  
+  // Bureau Data
+  bureau                Bureau
+  
+  // Relations to other systems
+  disputeItems          DisputeItem[]
+  auditItems            AuditItem[]
   
   @@map("tradelines")
-}
-
-model Inquiry {
-  id                String        @id @default(cuid())
-  creditReportId    String
-  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
-  
-  creditorName      String
-  bureau            Bureau
-  inquiryDate       DateTime
-  inquiryType       InquiryType
-  
-  // Dispute tracking
-  disputes          Dispute[]
-  
-  @@map("inquiries")
-}
-
-model PublicRecord {
-  id                String        @id @default(cuid())
-  creditReportId    String
-  creditReport      CreditReport  @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
-  
-  recordType        PublicRecordType
-  courtName         String?
-  caseNumber        String?
-  filingDate        DateTime?
-  amount            Decimal?
-  bureau            Bureau
-  status            String?
-  
-  // Dispute tracking
-  disputes          Dispute[]
-  
-  @@map("public_records")
 }
 
 enum Bureau {
@@ -205,92 +216,114 @@ enum Bureau {
   EXPERIAN
 }
 
-enum AccountType {
-  REVOLVING
-  INSTALLMENT
-  MORTGAGE
-  OPEN
-  COLLECTION
-  OTHER
+model Inquiry {
+  id              String    @id @default(cuid())
+  creditReportId  String
+  creditReport    CreditReport @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  
+  creditorName    String
+  inquiryDate     DateTime
+  bureau          Bureau
+  inquiryType     String?   // Hard, Soft
+  
+  disputeItems    DisputeItem[]
+  auditItems      AuditItem[]
+  
+  @@map("inquiries")
 }
 
-enum AccountStatus {
-  OPEN
-  CLOSED
-  PAID
-  COLLECTION
-  CHARGE_OFF
-  FORECLOSURE
-  REPOSSESSION
-}
-
-enum InquiryType {
-  HARD
-  SOFT
-}
-
-enum PublicRecordType {
-  BANKRUPTCY
-  JUDGMENT
-  TAX_LIEN
-  CIVIL_JUDGMENT
-  OTHER
+model PublicRecord {
+  id              String    @id @default(cuid())
+  creditReportId  String
+  creditReport    CreditReport @relation(fields: [creditReportId], references: [id], onDelete: Cascade)
+  
+  recordType      String    // Bankruptcy, Judgment, Lien
+  filingDate      DateTime?
+  referenceNumber String?
+  courtName       String?
+  amount          Decimal?
+  status          String?
+  bureau          Bureau
+  
+  disputeItems    DisputeItem[]
+  auditItems      AuditItem[]
+  
+  @@map("public_records")
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DISPUTES
+// DISPUTE ENGINE
 // ═══════════════════════════════════════════════════════════════
 
 model Dispute {
-  id                String          @id @default(cuid())
-  userId            String
-  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  // What's being disputed
-  disputeType       DisputeType
-  tradelineId       String?
-  tradeline         Tradeline?      @relation(fields: [tradelineId], references: [id])
-  inquiryId         String?
-  inquiry           Inquiry?        @relation(fields: [inquiryId], references: [id])
-  publicRecordId    String?
-  publicRecord      PublicRecord?   @relation(fields: [publicRecordId], references: [id])
+  // Current Status
+  status          DisputeStatus @default(PENDING)
+  round           Int         @default(1)
   
-  // Dispute details
-  bureau            Bureau
-  reason            DisputeReason
-  customReason      String?
-  instructions      String?         @db.Text
+  // Generated Letters
+  letters         GeneratedLetter[]
   
-  // Letter details
-  letterType        LetterType
-  letterContent     String?         @db.Text
-  letterSentAt      DateTime?
-  letterMethod      DeliveryMethod?
-  trackingNumber    String?
+  // Items in this dispute round
+  items           DisputeItem[]
   
-  // Status tracking
-  status            DisputeStatus   @default(PENDING)
-  round             Int             @default(1)
+  // Linked Document (The generated PDF)
+  documents       Document[]
   
-  // Response tracking
-  responseReceivedAt DateTime?
-  responseType      ResponseType?
-  responseNotes     String?         @db.Text
-  
-  // Outcome
-  outcome           DisputeOutcome?
-  outcomeDate       DateTime?
-  deletedFromReport Boolean         @default(false)
-  corrected         Boolean         @default(false)
-  
-  // Timestamps
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  
-  // Related documents
-  documents         Document[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
   
   @@map("disputes")
+}
+
+model DisputeItem {
+  id              String      @id @default(cuid())
+  disputeId       String
+  dispute         Dispute     @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  
+  // What is being disputed?
+  type            DisputeType
+  
+  // Link to raw data
+  tradelineId     String?
+  tradeline       Tradeline?  @relation(fields: [tradelineId], references: [id])
+  inquiryId       String?
+  inquiry         Inquiry?    @relation(fields: [inquiryId], references: [id])
+  publicRecordId  String?
+  publicRecord    PublicRecord? @relation(fields: [publicRecordId], references: [id])
+  
+  // Dispute Logic
+  reason          DisputeReason
+  customReason    String?
+  instruction     String?     // Specific instruction for AI generator
+  
+  // Outcome
+  status          DisputeStatus @default(PENDING)
+  outcome         DisputeOutcome?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("dispute_items")
+}
+
+model GeneratedLetter {
+  id              String      @id @default(cuid())
+  disputeId       String
+  dispute         Dispute     @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  
+  bureau          Bureau
+  content         String      @db.Text
+  letterType      LetterType
+  
+  sentAt          DateTime?
+  trackingNumber  String?
+  deliveryStatus  String?
+  
+  @@map("generated_letters")
 }
 
 enum DisputeType {
@@ -554,6 +587,7 @@ enum ActivityType {
   DOCUMENT_UPLOAD
   STATUS_CHANGE
   NOTE_ADDED
+  AUDIT_STARTED // New
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -624,4 +658,273 @@ enum SmsType {
   DISPUTE_UPDATE
   PAYMENT_REMINDER
   APPOINTMENT_REMINDER
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BLUEPRINT AUDIT SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+model BlueprintAudit {
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creditReportId        String
+  creditReport          CreditReport @relation(fields: [creditReportId], references: [id])
+  
+  // Scores at time of audit
+  transunionScore       Int?
+  equifaxScore          Int?
+  experianScore         Int?
+  
+  // Automated Analysis Results
+  totalViolationsFound  Int       @default(0)
+  utilizationPercentage Decimal?
+  totalUtilizationBalance Decimal?
+  totalCreditLimit      Decimal?
+  amountToReach20Percent Decimal?
+  positiveTradelineCount Int      @default(0)
+  negativeItemCount     Int       @default(0)
+  collectionCount       Int       @default(0)
+  inquiryCount          Int       @default(0)
+  
+  // Flags
+  needsStarterAccounts  Boolean   @default(false)
+  needsRentalTradelines Boolean   @default(false)
+  hasAuthorizedUserIssues Boolean @default(false)
+  
+  // Status
+  status                AuditStatus @default(PENDING_REVIEW)
+  reviewedBy            String?     // Admin user ID
+  reviewedAt            DateTime?
+  
+  // Generated Documents
+  clientBlueprintUrl    String?
+  companyBlueprintUrl   String?
+  
+  // Relationships
+  auditItems            AuditItem[]
+  consultationForm      ConsultationForm?
+  recommendations       AuditRecommendation[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@map("blueprint_audits")
+}
+
+model AuditItem {
+  id                    String    @id @default(cuid())
+  auditId               String
+  audit                 BlueprintAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  
+  // Item Reference
+  itemType              AuditItemType
+  tradelineId           String?
+  tradeline             Tradeline? @relation(fields: [tradelineId], references: [id])
+  inquiryId             String?
+  inquiry               Inquiry?  @relation(fields: [inquiryId], references: [id])
+  publicRecordId        String?
+  publicRecord          PublicRecord? @relation(fields: [publicRecordId], references: [id])
+  
+  // Item Details (cached for blueprint)
+  creditorName          String
+  accountNumber         String?
+  bureau                Bureau
+  accountType           String?
+  currentBalance        Decimal?
+  creditLimit           Decimal?
+  utilizationPercent    Decimal?
+  amountToReach20       Decimal?
+  accountAge            Int?      // In months
+  isAuthorizedUser      Boolean   @default(false)
+  
+  // Automated Detection
+  detectedViolations    Json?     // Array of violation codes
+  violationCount        Int       @default(0)
+  isNegative            Boolean   @default(false)
+  negativeReason        String?
+  
+  // Manual Resolution Selection
+  resolution            ItemResolution?
+  resolutionNotes       String?   @db.Text
+  
+  // Flags
+  doNotDispute          Boolean   @default(false)
+  doNotDisputeReason    String?
+  priorityLevel         Int       @default(0)  // 1-5, 5 being highest
+  
+  // For Collections
+  isSettleable          Boolean?
+  estimatedSettlement   Decimal?
+  originalCreditor      String?
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@map("audit_items")
+}
+
+model ConsultationForm {
+  id                    String    @id @default(cuid())
+  auditId               String    @unique
+  audit                 BlueprintAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  
+  // Client Personal Info
+  clientFirstName       String
+  clientLastName        String
+  clientEmail           String
+  clientPhone           String
+  clientAddress         String?
+  clientCity            String?
+  clientState           String?
+  clientZip             String?
+  clientDOB             DateTime?
+  
+  // Financial Situation
+  employmentStatus      EmploymentStatus?
+  monthlyIncome         Decimal?
+  rentOrOwn             RentOrOwn?
+  monthlyRent           Decimal?
+  hasCheckingAccount    Boolean?
+  hasSavingsAccount     Boolean?
+  
+  // Credit Goals
+  primaryGoal           String?   // "Buy Home", "Get Car", "Lower Interest Rates", etc.
+  timeframe             String?   // "3 months", "6 months", "1 year"
+  targetScore           Int?
+  
+  // Current Situation
+  hasBankruptcy         Boolean?
+  bankruptcyType        String?
+  bankruptcyDischargeDate DateTime?
+  hasForeclosure        Boolean?
+  hasRepossession       Boolean?
+  hasIdentityTheft      Boolean?
+  identityTheftDetails  String?   @db.Text
+  
+  // Rental History (for tradeline suggestion)
+  currentlyRenting      Boolean?
+  landlordName          String?
+  landlordPhone         String?
+  landlordEmail         String?
+  rentAmount            Decimal?
+  leaseStartDate        DateTime?
+  paymentMethod         String?   // "Check", "Online", "Cash"
+  
+  // Notes
+  consultantNotes       String?   @db.Text
+  clientNotes           String?   @db.Text
+  
+  // Status
+  completedAt           DateTime?
+  completedBy           String?   // Admin user ID
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@map("consultation_forms")
+}
+
+model AuditRecommendation {
+  id                    String    @id @default(cuid())
+  auditId               String
+  audit                 BlueprintAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  
+  type                  RecommendationType
+  title                 String
+  description           String    @db.Text
+  priority              Int       @default(0)
+  
+  // For product recommendations
+  productName           String?
+  productUrl            String?   // Affiliate link
+  estimatedImpact       String?   // "Could increase score by 20-40 points"
+  
+  // Tracking
+  implemented           Boolean   @default(false)
+  implementedAt         DateTime?
+  
+  createdAt             DateTime  @default(now())
+  
+  @@map("audit_recommendations")
+}
+
+model FCRAViolation {
+  id                    String    @id @default(cuid())
+  code                  String    @unique
+  section               String    // "1681e", "1681i", etc.
+  title                 String
+  description           String    @db.Text
+  severity              ViolationSeverity
+  commonIndicators      Json?     // Array of detection patterns
+  
+  @@map("fcra_violations")
+}
+
+enum AuditStatus {
+  PENDING_REVIEW
+  IN_REVIEW
+  COMPLETED
+  BLUEPRINT_GENERATED
+  ARCHIVED
+}
+
+enum AuditItemType {
+  TRADELINE
+  COLLECTION
+  INQUIRY
+  PUBLIC_RECORD
+  PERSONAL_INFO
+}
+
+enum ItemResolution {
+  GENERAL_DISPUTE
+  FCRA_VIOLATION
+  IDENTITY_THEFT
+  DEBT_VALIDATION
+  PAY_FOR_DELETE
+  GOODWILL_LETTER
+  AUTHORIZED_USER_REMOVAL
+  SETTLEMENT_NEGOTIATION
+  DO_NOT_DISPUTE
+  MONITOR_ONLY
+}
+
+enum EmploymentStatus {
+  EMPLOYED_FULL_TIME
+  EMPLOYED_PART_TIME
+  SELF_EMPLOYED
+  UNEMPLOYED
+  RETIRED
+  DISABLED
+  STUDENT
+}
+
+enum RentOrOwn {
+  RENT
+  OWN
+  LIVE_WITH_FAMILY
+  OTHER
+}
+
+enum RecommendationType {
+  STARTER_LOAN
+  SECURED_CREDIT_CARD
+  CREDIT_BUILDER_LOAN
+  RENTAL_TRADELINE
+  AUTHORIZED_USER
+  PAY_DOWN_BALANCE
+  REMOVE_AU_ACCOUNT
+  DISPUTE_ITEM
+  DEBT_SETTLEMENT
+  IDENTITY_PROTECTION
+  COLLECTIONS // Added from code interpretation
+  GENERAL // Added from code interpretation
+}
+
+enum ViolationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }
